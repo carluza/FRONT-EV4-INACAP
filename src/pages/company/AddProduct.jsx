@@ -12,7 +12,7 @@ import {
   doc,
   updateDoc,
 } from "firebase/firestore";
-import CompanySidebar from "../../components/Sidebar";
+import Sidebar from "../../components/Sidebar";
 
 const AddProduct = () => {
   const [producto, setProducto] = useState({
@@ -32,14 +32,18 @@ const AddProduct = () => {
   const [paginaActual, setPaginaActual] = useState(1);
   const [updatingStock, setUpdatingStock] = useState("");
   const [deleting, setDeleting] = useState("");
+  const [debugInfo, setDebugInfo] = useState("");
   const navigate = useNavigate();
 
   useEffect(() => {
     const user = auth.currentUser;
     if (!user) {
+      console.log("No hay usuario autenticado, redirigiendo...");
       navigate("/company/login");
       return;
     }
+
+    console.log("Usuario autenticado:", user.uid);
     cargarProductos();
   }, [navigate]);
 
@@ -47,21 +51,36 @@ const AddProduct = () => {
     setLoading(true);
     try {
       const user = auth.currentUser;
+      if (!user) {
+        console.error("No hay usuario autenticado");
+        return;
+      }
+
       const productosRef = collection(db, "productos");
       const q = query(
         productosRef,
-        where("empresaId", "==", user.uid),
-        orderBy("fechaCreacion", "desc")
+        where("empresaId", "==", user.uid)
+        // Removemos orderBy temporalmente para evitar problemas de índices
       );
       const querySnapshot = await getDocs(q);
       const productosData = querySnapshot.docs.map((doc) => ({
         id: doc.id,
         ...doc.data(),
       }));
+
+      // Ordenamos los productos en el cliente por fecha de creación
+      productosData.sort((a, b) => {
+        const fechaA =
+          a.fechaCreacion?.toDate?.() || a.fechaCreacion || new Date(0);
+        const fechaB =
+          b.fechaCreacion?.toDate?.() || b.fechaCreacion || new Date(0);
+        return fechaB - fechaA;
+      });
+
       setProductos(productosData);
     } catch (error) {
       console.error("Error al cargar productos:", error);
-      alert("Error al cargar los productos");
+      alert("Error al cargar los productos: " + error.message);
     } finally {
       setLoading(false);
     }
@@ -82,13 +101,37 @@ const AddProduct = () => {
     try {
       const user = auth.currentUser;
       if (!user) {
+        alert("No hay usuario autenticado");
         navigate("/company/login");
+        return;
+      }
+
+      // Validar campos requeridos
+      if (
+        !producto.nombre ||
+        !producto.descripcion ||
+        !producto.cantidad ||
+        !producto.precio ||
+        !producto.fechaVencimiento
+      ) {
+        alert("Todos los campos son obligatorios");
         return;
       }
 
       // Validar descripción
       if (producto.descripcion.length > 300) {
         alert("La descripción no puede exceder los 300 caracteres");
+        return;
+      }
+
+      // Validar cantidad y precio
+      if (parseInt(producto.cantidad) <= 0) {
+        alert("La cantidad debe ser mayor a 0");
+        return;
+      }
+
+      if (parseFloat(producto.precio) <= 0) {
+        alert("El precio debe ser mayor a 0");
         return;
       }
 
@@ -130,7 +173,7 @@ const AddProduct = () => {
       cargarProductos();
     } catch (error) {
       console.error("Error al agregar producto:", error);
-      alert("Error al agregar el producto");
+      alert("Error al agregar el producto: " + error.message);
     } finally {
       setSaving(false);
     }
@@ -142,8 +185,10 @@ const AddProduct = () => {
     try {
       await deleteDoc(doc(db, "productos", id));
       setProductos(productos.filter((p) => p.id !== id));
+      alert("Producto eliminado correctamente");
     } catch (error) {
-      alert("Error al eliminar producto");
+      console.error("Error al eliminar producto:", error);
+      alert("Error al eliminar producto: " + error.message);
     } finally {
       setDeleting("");
     }
@@ -158,7 +203,8 @@ const AddProduct = () => {
         productos.map((p) => (p.id === id ? { ...p, cantidad: newStock } : p))
       );
     } catch (error) {
-      alert("Error al actualizar stock");
+      console.error("Error al actualizar stock:", error);
+      alert("Error al actualizar stock: " + error.message);
     } finally {
       setUpdatingStock("");
     }
@@ -195,19 +241,59 @@ const AddProduct = () => {
     }
   };
 
+  const testConnection = async () => {
+    try {
+      const user = auth.currentUser;
+      console.log("Usuario actual:", user);
+
+      const productosRef = collection(db, "productos");
+      const snapshot = await getDocs(productosRef);
+
+      const info = `
+        Usuario: ${user ? user.uid : "No autenticado"}
+        Productos totales: ${snapshot.size}
+        Productos del usuario: ${
+          snapshot.docs.filter((doc) => doc.data().empresaId === user?.uid)
+            .length
+        }
+      `;
+
+      setDebugInfo(info);
+      console.log(info);
+    } catch (error) {
+      setDebugInfo(`Error: ${error.message}`);
+      console.error("Error de prueba:", error);
+    }
+  };
+
   return (
     <div className="d-flex">
-      <CompanySidebar />
+      <Sidebar />
       <div className="flex-grow-1 p-4">
         <div className="d-flex justify-content-between align-items-center mb-4">
           <h2 className="text-success">Agregar Productos</h2>
-          <button
-            onClick={() => navigate("/company/home")}
-            className="btn btn-outline-secondary"
-          >
-            ← Volver al Perfil
-          </button>
+          <div className="d-flex gap-2">
+            <button
+              onClick={testConnection}
+              className="btn btn-outline-info btn-sm"
+            >
+              Probar Conexión
+            </button>
+            <button
+              onClick={() => navigate("/company/home")}
+              className="btn btn-outline-secondary"
+            >
+              ← Volver al Perfil
+            </button>
+          </div>
         </div>
+
+        {debugInfo && (
+          <div className="alert alert-info mb-3">
+            <strong>Información de Debug:</strong>
+            <pre className="mb-0 mt-2">{debugInfo}</pre>
+          </div>
+        )}
 
         <div className="row">
           <div className="col-md-6">
@@ -350,6 +436,14 @@ const AddProduct = () => {
                       <span className="visually-hidden">Cargando...</span>
                     </div>
                   </div>
+                ) : productosFiltrados.length === 0 ? (
+                  <div className="text-center">
+                    <p className="text-muted">
+                      {filtroEstado !== "todos" || filtroNombre
+                        ? "No se encontraron productos con los filtros aplicados"
+                        : "No hay productos registrados. ¡Agrega tu primer producto!"}
+                    </p>
+                  </div>
                 ) : (
                   <>
                     <div className="table-responsive">
@@ -367,12 +461,12 @@ const AddProduct = () => {
                         <tbody>
                           {productosPaginados.map((prod) => (
                             <tr key={prod.id}>
-                              <td>{prod.nombre}</td>
-                              <td>{prod.cantidad}</td>
-                              <td>${prod.precio}</td>
+                              <td>{prod.nombre || "Sin nombre"}</td>
+                              <td>{prod.cantidad || 0}</td>
+                              <td>${prod.precio || 0}</td>
                               <td>
                                 <span className={getEstadoClass(prod.estado)}>
-                                  {prod.estado}
+                                  {prod.estado || "disponible"}
                                 </span>
                               </td>
                               <td>
@@ -382,24 +476,24 @@ const AddProduct = () => {
                                     onClick={() =>
                                       handleStockChange(
                                         prod.id,
-                                        prod.cantidad,
+                                        prod.cantidad || 0,
                                         -1
                                       )
                                     }
                                     disabled={
                                       updatingStock === prod.id ||
-                                      prod.cantidad <= 0
+                                      (prod.cantidad || 0) <= 0
                                     }
                                   >
                                     -
                                   </button>
-                                  <span>{prod.cantidad}</span>
+                                  <span>{prod.cantidad || 0}</span>
                                   <button
                                     className="btn btn-outline-secondary btn-sm"
                                     onClick={() =>
                                       handleStockChange(
                                         prod.id,
-                                        prod.cantidad,
+                                        prod.cantidad || 0,
                                         1
                                       )
                                     }
@@ -425,10 +519,6 @@ const AddProduct = () => {
                         </tbody>
                       </table>
                     </div>
-
-                    {productosFiltrados.length === 0 && (
-                      <p className="text-center text-muted">No hay productos</p>
-                    )}
 
                     {totalPaginas > 1 && (
                       <nav>
